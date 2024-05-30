@@ -7,9 +7,7 @@ class LibraryTransaction(Document):
     def before_submit(self):
         if self.type == "Issue":
             self.validate_issue()
-            self.calc_delay_fine()
             self.update_article_list()
-            # self.remove_returned_articles()
             for row in self.article_list:
                 article = frappe.get_doc("Article", row.article)
                 article.status = "Issued"
@@ -17,10 +15,12 @@ class LibraryTransaction(Document):
 
         elif self.type == "Return":
             self.validate_return()
+            self.remove_articles()
             for row in self.article_list:
                 article = frappe.get_doc("Article", row.article)
                 article.status = "Available"
                 article.save()
+
 
 
     def validate_issue(self):
@@ -40,26 +40,34 @@ class LibraryTransaction(Document):
             if article.status == "Available":
                 frappe.throw("Article cannot be returned without being issued first")
 
-    # def remove_returned_articles(self):
-    # # Fetch the Library Member document
-    #     library_member = frappe.get_doc("Library Member", self.library_member)
-    #
-    # # Create a set of returned articles for faster lookup
-    #     returned_articles = {row.article for row in self.article_list}
-    #
-    # # Remove returned articles from issued_articles
-    #     updated_issued_articles = []
-    #     for issued_article in library_member.issued_articles:
-    #         if issued_article.article_name not in returned_articles:
-    #             updated_issued_articles.append(issued_article)
-    #
-    # # Update the issued_articles field
-    #     library_member.issued_articles = []
-    #     for issued_article in updated_issued_articles:
-    #         library_member.append("issued_articles", issued_article)
-    #
-    # # Save the updated Library Member document
-    #     library_member.save()
+
+    def remove_articles(self):
+    # Fetch the Library Member document
+        library_member = frappe.get_doc("Library Member", self.library_member)
+
+    # Check if the document was found
+        if library_member:
+            articles_found = False
+        # Create a list of articles to remove
+            articles_to_remove = [row.article for row in self.article_list]
+
+        # Iterate through the "issued_articles" child table entries
+            issued_articles = library_member.get("issued_articles")
+            for article_entry in list(issued_articles):
+                if article_entry.article_name in articles_to_remove:
+                # Remove the article entry from the "issued_articles" child table
+                    issued_articles.remove(article_entry)
+                    articles_found = True
+
+            if articles_found:
+            # Save the updated Library Member document
+                library_member.save()
+                frappe.msgprint("Articles returned successfully.")
+            else:
+                frappe.msgprint("Articles not found in the library member's issued articles list.")
+        else:
+            frappe.throw("Library Member not found")
+
 
 
 
@@ -90,6 +98,47 @@ class LibraryTransaction(Document):
     #         self.calc_delay_fine()
     #         damage_fine = int(self.damage_fine) if self.damage_fine else 0
     #         self.total_fine = self.delay_fine + damage_fine
+
+
+    # def before_save(self):
+    #     if self.type == "Return":
+    #         self.validate_return()
+    #         self.calculate_fines()
+    #
+    # def calculate_fines(self):
+    #     self.delay_fine = self.calc_delay_fine() or 0
+    #     damage_fine = int(self.damage_fine) if self.damage_fine else 0
+    #     self.total_fine = self.delay_fine + damage_fine
+    #
+    # def calc_delay_fine(self):
+    #     total_delay_fine = 0
+    #     loan_period = frappe.db.get_single_value('Library Settings', 'loan_period')
+    #     single_day_fine = frappe.db.get_single_value('Library Settings', 'single_day_fine')
+    #
+    #     for row in self.article_list:
+    #         issued_doc = frappe.get_last_doc(
+    #             "Library Transaction",
+    #             filters={
+    #                 "library_member": self.library_member,
+    #                 "article": row.article,
+    #                 "docstatus": 1,
+    #                 "type": "Issue",
+    #             },
+    #             order_by="creation DESC"  # Specify the table name for the 'creation' column
+    #         )
+    #         if issued_doc:
+    #             issued_date = issued_doc.date
+    #             actual_duration = date_diff(self.date, issued_date)
+    #
+    #             if actual_duration > loan_period:
+    #                 delay_fine = single_day_fine * (actual_duration - loan_period)
+    #                 row.delay_fine = delay_fine
+    #                 total_delay_fine += delay_fine
+    #             else:
+    #                 row.delay_fine = 0
+    #
+    #     return total_delay_fine
+
 
 
     def before_save(self):
@@ -135,21 +184,20 @@ class LibraryTransaction(Document):
                 row.delay_fine = 0
 
     def update_article_list(self):
-        # Fetch the Library Member document
+    # Fetch the Library Member document
         library_member = frappe.get_doc("Library Member", self.library_member)
 
-    # Iterate through article_list and add issued articles to Article List
+    # Iterate through article_list and add issued articles to issued_articles
         if self.type == "Issue":
             for row in self.article_list:
-                article = frappe.get_doc("Article", row.article)
                 library_member.append("issued_articles", {
-                    "article_name": article.name,
-                    # "issue_date": self.date,
-                    # "due_date": self.due_date  # Ensure these fields exist in your doctype
-                    })
+                    "article_name": row.article,
+                # Add any other necessary fields here, such as issue_date or due_date
+                })
 
-        # Save the updated Library Member document
+    # Save the updated Library Member document
         library_member.save()
+
         # Optionally, return a success message
         #     return "Article list updated successfully."
         # except Exception as e:
